@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'">
+<title>imu-fuse</title>
+<link data-trunk rel="rust" href="crates/if_web/Cargo.toml">
+<link data-trunk rel="copy-file" href="web/boot.js">
+<style>
+:root { color-scheme: light dark; --bg: #f4f5f7; --fg: #1d2129; --panel: #fff; --line: #d5d8de; --acc: #2f6fd6; }
+@media (prefers-color-scheme: dark) { :root { --bg: #14171c; --fg: #e3e6ea; --panel: #1d2128; --line: #343a44; --acc: #6ea2ff; } }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 17px; margin: 0; flex: 1; }
+header small { opacity: .7; font-weight: normal; }
+main { display: grid; grid-template-columns: 320px 1fr; gap: 12px; padding: 12px; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+h2 { font-size: 13px; margin: 10px 0 6px; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
+h2:first-child { margin-top: 0; }
+label { display: grid; grid-template-columns: 1fr 110px; align-items: center; gap: 6px; margin: 3px 0; }
+label.tri { grid-template-columns: 1fr 52px 52px 52px; }
+input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 5px; min-width: 0; }
+button { cursor: pointer; padding: 4px 9px; }
+button.on { background: var(--acc); color: #fff; border-color: var(--acc); }
+.row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+#viewwrap { position: relative; height: 56vh; min-height: 300px; border-radius: 6px; overflow: hidden; background: #000; }
+#gl { width: 100%; height: 100%; display: block; touch-action: none; }
+#hud { position: absolute; left: 8px; top: 8px; font: 12px/1.35 ui-monospace, monospace; color: #fff; background: rgba(0,0,0,.45); padding: 6px 8px; border-radius: 5px; white-space: pre; pointer-events: none; }
+#tools { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+#tools button { background: rgba(0,0,0,.5); color: #fff; border-color: rgba(255,255,255,.3); font-size: 12px; }
+#tools button.on { background: var(--acc); }
+#nogl { display: none; position: absolute; inset: 0; color: #fff; padding: 30px; text-align: center; }
+canvas.plot { width: 100%; display: block; }
+#plot { height: 300px; }
+#bars, #sweep { height: 150px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 600px) { .two { grid-template-columns: 1fr; } }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+td, th { border-bottom: 1px solid var(--line); padding: 3px 5px; text-align: right; }
+td:first-child, th:first-child { text-align: left; }
+#time { flex: 1; min-width: 120px; }
+.note { font-size: 12px; opacity: .7; }
+.k-comp { color: #e8a33d; } .k-mahony { color: #3d9be8; } .k-madgwick { color: #5ac46a; }
+</style>
+</head>
+<body>
+<header>
+  <h1>imu-fuse <small data-i18n="subtitle">6-axis IMU attitude-fusion lab</small></h1>
+  <button id="lang">한국어</button>
+</header>
+<main>
+<section>
+  <h2 data-i18n="sensor">Sensor</h2>
+  <label><span data-i18n="preset">Preset</span><select id="preset">
+    <option value="0" data-i18n="p0">consumer MEMS (typical)</option>
+    <option value="1" data-i18n="p1">industrial MEMS (typical)</option>
+    <option value="2" data-i18n="p2">tactical-grade (typical)</option>
+  </select></label>
+  <label><span data-i18n="fs">Sample rate (Hz)</span><select id="fs">
+    <option>100</option><option selected>200</option><option>500</option><option>1000</option>
+  </select></label>
+  <label><span data-i18n="dur">Duration (s)</span><input id="dur" type="number" min="10" max="120" step="1" value="30"></label>
+  <label><span data-i18n="gnd">Gyro noise (deg/s/√Hz)</span><input id="gnd" type="number" min="0" step="0.001"></label>
+  <label class="tri"><span data-i18n="gb">Gyro bias x/y/z (deg/s)</span><input id="gb0" type="number" step="0.01"><input id="gb1" type="number" step="0.01"><input id="gb2" type="number" step="0.01"></label>
+  <label><span data-i18n="grw">Gyro bias RW ((deg/h)/√h)</span><input id="grw" type="number" min="0" step="0.1"></label>
+  <label><span data-i18n="and">Accel noise (mg/√Hz)</span><input id="and" type="number" min="0" step="0.01"></label>
+  <label class="tri"><span data-i18n="ab">Accel bias x/y/z (mg)</span><input id="ab0" type="number" step="0.5"><input id="ab1" type="number" step="0.5"><input id="ab2" type="number" step="0.5"></label>
+  <h2 data-i18n="motion">Motion</h2>
+  <label><span data-i18n="scen">Scenario</span><select id="scen">
+    <option value="0" data-i18n="s0">static</option>
+    <option value="1" data-i18n="s1" selected>slow sway</option>
+    <option value="2" data-i18n="s2">walking humanoid torso</option>
+    <option value="3" data-i18n="s3">fast spin</option>
+  </select></label>
+  <label><span data-i18n="srp">Static roll / pitch (deg)</span><span class="row" style="margin:0"><input id="sr" type="number" step="1" value="0" style="width:50px"><input id="sp" type="number" step="1" value="0" style="width:50px"></span></label>
+  <div class="row"><span data-i18n="seed">Seed</span> <b id="seed">1</b> <button id="newseed" data-i18n="newseed">new seed</button></div>
+  <h2 data-i18n="filters">Filters</h2>
+  <label><span data-i18n="sel">Selected filter</span><select id="sel">
+    <option value="0" data-i18n="f0">complementary</option>
+    <option value="1" data-i18n="f1">Mahony</option>
+    <option value="2" data-i18n="f2" selected>Madgwick</option>
+  </select></label>
+  <label><span>τ (s)</span><input id="tau" type="number" min="0.001" step="0.1" value="1"></label>
+  <label><span>Kp (1/s)</span><input id="kp" type="number" min="0" step="0.1" value="1"></label>
+  <label><span>Ki (1/s²)</span><input id="ki" type="number" min="0" step="0.01" value="0.1"></label>
+  <label><span>β (rad/s)</span><input id="beta" type="number" min="0" step="0.005" value="0.05"></label>
+  <div class="row"><button id="tune" data-i18n="tune">auto-tune</button><button id="apply" data-i18n="apply" disabled>apply best</button></div>
+  <h2 data-i18n="implied">Implied by inputs</h2>
+  <div id="readout"></div>
+  <p class="note" data-i18n="disclaimer">Educational estimates — validate on real hardware.</p>
+</section>
+<div style="display:grid;gap:12px;min-width:0">
+<section>
+  <div id="viewwrap">
+    <canvas id="gl"></canvas>
+    <div id="hud"></div>
+    <div id="tools">
+      <div class="row" style="margin:0">
+        <button id="v0" class="on" data-i18n="v0">Perspective</button><button id="v1" data-i18n="v1">Top</button><button id="v2" data-i18n="v2">Side</button><button id="v3" data-i18n="v3">Body</button>
+      </div>
+      <button id="t0" class="on" data-i18n="t0">ghost: selected</button>
+      <button id="t1" class="on" data-i18n="t1">body axes</button>
+      <button id="t2" class="on" data-i18n="t2">accel arrow</button>
+      <button id="t3" class="on" data-i18n="t3">tilt cone</button>
+    </div>
+    <div id="nogl" data-i18n="nogl">WebGL2 is not available — numeric readouts and plots still work.</div>
+  </div>
+  <div class="row">
+    <button id="play" data-i18n="play">play</button>
+    <select id="speed"><option value="0.1">0.1×</option><option value="0.25" selected>0.25×</option><option value="1">1×</option></select>
+    <input id="time" type="range" min="0" max="1" step="0.001" value="0">
+  </div>
+  <p class="note" data-i18n="hint">Drag: orbit · right-drag / two fingers: pan · wheel / pinch: zoom · double-click: reset. In "static", drag the torso to tilt it.</p>
+</section>
+<section>
+  <table id="metrics"></table>
+</section>
+<section>
+  <h2 data-i18n="errplot">Error vs time (deg)</h2>
+  <canvas id="plot" class="plot"></canvas>
+  <div class="two">
+    <div><h2 data-i18n="rmsbar">RMS tilt error (deg)</h2><canvas id="bars" class="plot"></canvas></div>
+    <div><h2 data-i18n="sweepplot">Gain sweep (selected filter)</h2><canvas id="sweep" class="plot"></canvas></div>
+  </div>
+</section>
+</div>
+</main>
+</body>
+</html>
